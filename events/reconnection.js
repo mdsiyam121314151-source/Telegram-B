@@ -1,152 +1,185 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason} from 'baileys';
 
-import handleIncomingMessage from '../events/messageHandler.js';
+import {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason
+} from "baileys";
 
-import configManager from '../utils/manageConfigs.js';
+import handleIncomingMessage from "./messageHandler.js";
+import configManager from "../utils/manageConfigs.js";
+import fs from "fs";
 
-import autoJoin from '../utils/autoJoin.js'
+const AUTHOR = "𝐒𝐈𝐘𝐀𝐌 𝐇𝐀𝐒𝐀𝐍";
+const SESSIONS_FILE = "./sessions.json";
 
-import fs from 'fs';
+const sessions = new Map();
+const startingSessions = new Map();
 
-const SESSIONS_FILE = './sessions.json';
+function readSessionNumbers() {
+  if (!fs.existsSync(SESSIONS_FILE)) return [];
 
-const sessions = {};
-
-function removeSession(number) {
-
-    console.log(`❌ Removing session for ${number}`);
-
-    // Remove from sessions.json
-    if (fs.existsSync(SESSIONS_FILE)) {
-
-        try {
-            const data = JSON.parse(fs.readFileSync(SESSIONS_FILE));
-
-            const sessionNumbers = Array.isArray(data.sessions) ? data.sessions : [];
-
-            const updated = sessionNumbers.filter(num => num !== number);
-
-            fs.writeFileSync(SESSIONS_FILE, JSON.stringify({ sessions: updated }, null, 2));
-
-        } catch (err) {
-            
-            console.error("❌ Failed to read/write sessions file:", err);
-        }
-    }
-
-    // Remove session folder
-    const sessionPath = `./sessions/${number}`;
-
-    if (fs.existsSync(sessionPath)) {
-        
-        fs.rmSync(sessionPath, { recursive: true, force: true });
-    }
-
-    // Remove from in-memory sessions
-    delete sessions[number];
-
-    console.log(`✅ Session for ${number} fully removed.`);
+  try {
+    const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
+    return Array.isArray(data.sessions)
+      ? [...new Set(data.sessions.map(String))]
+      : [];
+  } catch (error) {
+    console.error("❌ Failed to read sessions.json:", error);
+    return [];
+  }
 }
 
-async function reconnect() {
+function writeSessionNumbers(numbers) {
+  fs.writeFileSync(
+    SESSIONS_FILE,
+    JSON.stringify({ sessions: [...new Set(numbers)] }, null, 2)
+  );
+}
 
-    console.log("Reconnecting All Users You Connected")
+function removeSession(number) {
+  number = String(number);
 
-    if (!fs.existsSync(SESSIONS_FILE)) return;
+  console.log(`❌ Removing session for ${number}`);
 
-    let data;
+  try {
+    writeSessionNumbers(
+      readSessionNumbers().filter(item => item !== number)
+    );
+  } catch (error) {
+    console.error("❌ Failed to update sessions.json:", error);
+  }
 
+  const socket = sessions.get(number);
+  sessions.delete(number);
+
+  if (socket) {
     try {
-
-        data = JSON.parse(fs.readFileSync(SESSIONS_FILE));
-
-    } catch (err) {
-
-        console.error("❌ Failed to read sessions file:", err);
-
-        return;
+      socket.end(undefined);
+    } catch (error) {
+      console.error("Socket close error:", error.message);
     }
+  }
 
-    const sessionNumbers = Array.isArray(data.sessions) ? data.sessions : [];
+  const sessionPath = `./sessions/${number}`;
 
-    for (const number of sessionNumbers) {
-
-        if (number === configManager.config.users["root"].primary) continue;
-
-        console.log(`🔄 Reconnecting session for: ${number}`);
-
-        try {
-
-            await startSession(number);
-
-        } catch (err) {
-
-            console.error(`❌ Failed to reconnect session for ${number}:`, err);
-
-            removeSession(number);
-        }
+  try {
+    if (fs.existsSync(sessionPath)) {
+      fs.rmSync(sessionPath, { recursive: true, force: true });
     }
+  } catch (error) {
+    console.error("❌ Failed to remove session folder:", error);
+  }
+
+  console.log(`✅ Session for ${number} removed.`);
 }
 
 async function startSession(targetNumber) {
+  targetNumber = String(targetNumber);
 
-    let count = 1;
+  if (sessions.has(targetNumber)) {
+    return sessions.get(targetNumber);
+  }
 
+  if (startingSessions.has(targetNumber)) {
+    return startingSessions.get(targetNumber);
+  }
+
+  const startPromise = (async () => {
     const sessionPath = `./sessions/${targetNumber}`;
 
-    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+    fs.mkdirSync(sessionPath, { recursive: true });
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { state, saveCreds } =
+      await useMultiFileAuthState(sessionPath);
 
     const sock = makeWASocket({
-
-        auth: state,
-
-        printQRInTerminal: false,
-
-        syncFullHistory: false,
+      auth: state,
+      printQRInTerminal: false,
+      syncFullHistory: false
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sessions.set(targetNumber, sock);
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on("creds.update", saveCreds);
 
-        const { connection, lastDisconnect } = update;
+    sock.ev.on("connection.update", update => {
+      const { connection, lastDisconnect } = update || {};
 
-        if (connection === 'close') {
+      if (connection === "open") {
+        console.log(`✅ Session connected: ${targetNumber}`);
+        return;
+      }
 
-            console.log(`🔌 Session closed for: ${targetNumber}`);
+      if (connection !== "close") return;
 
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (sessions.get(targetNumber) === sock) {
+        sessions.delete(targetNumber);
+      }
 
-            if (shouldReconnect) {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
 
-                console.log(`🔄 Attempting reconnect for ${targetNumber}...`);
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.log(`🚫 Session logged out: ${targetNumber}`);
+        removeSession(targetNumber);
+        return;
+      }
 
-                startSession(targetNumber)
+      console.log(`🔄 Session reconnecting: ${targetNumber}`);
 
-            } else {
-
-                console.log(`🚫 Logged out: removing session for ${targetNumber}`);
-
-                removeSession(targetNumber);
-            }
-
-        } else if (connection === 'open') {
-
-            console.log(`✅ Session open for ${targetNumber}`);
-
-        }
+      setTimeout(() => {
+        startSession(targetNumber).catch(error => {
+          console.error(
+            `❌ Reconnect failed for ${targetNumber}:`,
+            error
+          );
+        });
+      }, 3000);
     });
 
-    sock.ev.on('messages.upsert', async (msg) => handleIncomingMessage(msg, sock));
+    sock.ev.on("messages.upsert", async event => {
+      try {
+        await handleIncomingMessage(event, sock);
+      } catch (error) {
+        console.error(
+          `Message handler error (${targetNumber}):`,
+          error
+        );
+      }
+    });
 
-    console.log(`✅ Session established for ${targetNumber}`);
+    console.log(`✅ Session started: ${targetNumber}`);
 
-
-    sessions[targetNumber] = sock;
-    
     return sock;
+  })();
+
+  startingSessions.set(targetNumber, startPromise);
+
+  try {
+    return await startPromise;
+  } finally {
+    startingSessions.delete(targetNumber);
+  }
 }
 
+async function reconnect() {
+  console.log("🔄 Reconnecting saved WhatsApp sessions...");
+
+  const numbers = readSessionNumbers();
+  const rootNumber =
+    configManager.config?.users?.root?.primary;
+
+  for (const number of numbers) {
+    if (rootNumber && String(number) === String(rootNumber)) {
+      continue;
+    }
+
+    try {
+      await startSession(number);
+    } catch (error) {
+      console.error(`❌ Failed to start ${number}:`, error);
+    }
+  }
+}
+
+export { startSession, removeSession, sessions, AUTHOR };
 export default reconnect;
