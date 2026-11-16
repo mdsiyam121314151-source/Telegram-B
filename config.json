@@ -1,13 +1,43 @@
-
 {
+  "metadata": {
+    "version": "2.0.0",
+    "author": "𝐒𝐈𝐘𝐀𝐌 𝐇𝐀𝐒𝐀𝐍"
+  },
   "users": {
     "root": {
       "primary": "8801608279461"
     },
     "8801608279461": {
+      "adminList": [
+        "ফোন নম্বর এখানে"
+      ],
+      "adminUidList": [
+        "WhatsApp UID এখানে"
+      ],
+
+      "ownerList": [
+        "ফোন নম্বর এখানে"
+      ],
+      "ownerUidList": [
+        "WhatsApp UID এখানে"
+      ],
+
+      "whiteList": [
+        "ফোন নম্বর এখানে"
+      ],
+      "whiteListUidList": [
+        "WhatsApp UID এখানে"
+      ],
+
       "sudoList": [
         "8801789138157"
       ],
+      "sudoUidList": [
+        "WhatsApp UID এখানে"
+      ],
+
+      "adminOnly": false,
+      "whiteListMode": false,
       "tagAudioPath": "tag.mp3",
       "antilink": false,
       "response": true,
