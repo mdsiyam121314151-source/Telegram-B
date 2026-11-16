@@ -1,46 +1,54 @@
-import TelegramBot from 'node-telegram-bot-api';
 
-import axios from 'axios';
+import TelegramBot from "node-telegram-bot-api";
+import { TELEGRAM_BOT_TOKEN } from "../config.js";
+import { messageHandler } from "./handler.js";
+import reconnect from "./reconnection.js";
 
-import { TELEGRAM_BOT_TOKEN } from '../config.js';
-
-import { messageHandler } from '../events/handler.js';
-
-import reconnect from '../events/reconnection.js';
+const AUTHOR = "𝐒𝐈𝐘𝐀𝐌 𝐇𝐀𝐒𝐀𝐍";
 
 export let bot;
+let started = false;
 
 export async function startBot() {
+  if (started) return bot;
+
+  if (!TELEGRAM_BOT_TOKEN) {
+    throw new Error("TELEGRAM_BOT_TOKEN is not configured.");
+  }
 
   try {
-    
-    const response = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates`);
+    bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
+      polling: {
+        autoStart: false,
+        params: { timeout: 30 }
+      }
+    });
 
-    const updates = response.data.result;
+    bot.on("polling_error", error => {
+      console.error("Telegram polling error:", error.message);
+    });
 
-    const lastUpdate = updates.length > 0
-
-      ? updates[updates.length - 1].update_id + 1
-
-      : 0;
-
-    bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: { autoStart: false } });
-
-    bot.startPolling({ offset: lastUpdate }); // 🔥 starts fresh
-
-    reconnect();
+    bot.on("error", error => {
+      console.error("Telegram bot error:", error.message);
+    });
 
     messageHandler(bot);
 
-    console.log('🤖 Telegram bot is running...');
+    await bot.startPolling();
+    started = true;
 
+    console.log("🤖 Telegram bot is running...");
+
+    reconnect().catch(error => {
+      console.error("Session reconnect error:", error);
+    });
+
+    return bot;
   } catch (error) {
-
-    console.error('❌ Failed to start Telegram bot:', error);
-
-   reconnect()
-  
-
+    started = false;
+    console.error("❌ Failed to start Telegram bot:", error);
+    throw error;
   }
-
 }
+
+export { AUTHOR };
