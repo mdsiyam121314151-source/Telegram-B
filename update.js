@@ -1,104 +1,89 @@
-import fs from 'fs';
+import fs from "node:fs";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import channelSender from "./commands/channelSender.js";
 
-import path from 'path';
-
-import { execSync } from 'child_process';
-
-import { fileURLToPath } from 'url';
-
-import channelSender from './commands/channelSender.js'
-
-// Get current directory
+const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
-
 const __dirname = path.dirname(__filename);
 
-const credsPath = path.join(__dirname, 'auth_info_baileys/creds.json');
+const tempDir = path.join(__dirname, ".temp_bot_update");
+const repoURL = "https://github.com/mdsiyam121314151-source/Telegram-B.git";
 
-const tempDir = path.join(__dirname, '.temp_bot_update');
+const EXCLUDED = new Set([
+".git",
+"node_modules",
+"config.json",
+"config.js",
+"prem.json",
+"sessions.json",
+"sessions",
+"auth",
+"auth_info_baileys",
+".env"
+]);
 
-const repoURL = 'https://github.com/Danscot/senku-xmd'; // replace this!
-
-
-// Utility: Recursively copy files/folders (excluding .git)
 function copyFolderContents(src, dest) {
+if (!fs.existsSync(src)) return;
 
-  if (!fs.existsSync(src)) return;
+for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+if (EXCLUDED.has(entry.name)) continue;
 
-  const entries = fs.readdirSync(src, { withFileTypes: true });
+const srcPath = path.join(src, entry.name);
+const destPath = path.join(dest, entry.name);
 
-  for (const entry of entries) {
-
-    if (entry.name === '.git' || entry.name === 'config.json' || entry.name === 'sessions.json' || entry.name === "config.js" || entry.name === "prem.json" || entry.name === "sessions") continue; // 🚫 skip .git folder and config.json
-
-    const srcPath = path.join(src, entry.name);
-
-    const destPath = path.join(dest, entry.name);
-
-    if (entry.isDirectory()) {
-
-      if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
-
-      copyFolderContents(srcPath, destPath);
-
-    } else {
-
-      fs.copyFileSync(srcPath, destPath);
-
-    }
-
-  }
+if (entry.isDirectory()) {
+  fs.mkdirSync(destPath, { recursive: true });
+  copyFolderContents(srcPath, destPath);
+} else if (entry.isFile()) {
+  fs.copyFileSync(srcPath, destPath);
 }
 
+}
+}
 
-// Main logic
 async function update(message, client) {
+const remoteJid = message?.key?.remoteJid;
+if (!remoteJid || !client) return;
 
+await client.sendMessage(remoteJid, {
+text: "🔄 Updating your bot... Please wait."
+});
 
-  const remoteJid = message.key.remoteJid;
+try {
+fs.rmSync(tempDir, { recursive: true, force: true });
 
-  await client.sendMessage(remoteJid, { text: "🔄 Updating your bot... Please wait." });
+await execFileAsync("git", [
+  "clone",
+  "--depth",
+  "1",
+  repoURL,
+  tempDir
+]);
 
-  // body...
-  
-  console.log('🔄 Pulling latest code from GitHub...');
+copyFolderContents(tempDir, __dirname);
 
-  try {
+fs.rmSync(tempDir, { recursive: true, force: true });
 
-    if (fs.existsSync(tempDir)) {
+await channelSender(
+  message,
+  client,
+  "✅ Update files copied successfully. Restart the bot manually to apply changes.",
+  2
+);
 
-      execSync(`rm -rf ${tempDir}`);
-    }
+} catch (error) {
+console.error("Update failed:", error);
 
-    execSync(`git clone ${repoURL} ${tempDir}`);
+fs.rmSync(tempDir, { recursive: true, force: true });
 
-    console.log('🔁 Copying updated files to root...');
+await client.sendMessage(remoteJid, {
+  text: "❌ Update failed: " + error.message
+});
 
-    copyFolderContents(tempDir, __dirname);
-
-    console.log('✅ Update completed ...');
-
-    await import('./main.js');
-
-    await import('./utils/connector.js');
-
-    channelSender(message, client, "Your bot instance has been updated to latest version sucessfully.\n\nThanks for using our service\n\n```powered by senku tech```", 2)
-    
-    exec(`pm2 restart ${name}`, (err, stdout) => {
-
-        if (err) console.log("Failed to restart PM2 session:", err);
-
-        console.log(`PM2 session ${name} updated and restarted.`);
-
-        process.exit(0);
-
-    });
-
-  } catch (err) {
-
-    console.error('❌ Failed to update bot:', err.message);
-  }
-
-};
+}
+}
 
 export default update;
