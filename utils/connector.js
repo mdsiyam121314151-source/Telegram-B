@@ -1,20 +1,60 @@
-
 import {
     makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion
-} from 'baileys';
+} from "baileys";
 
-import configManager from '../utils/manageConfigs.js';
-import fs from 'fs';
+import configManager from "../utils/manageConfigs.js";
+import fs from "fs";
 
-import handleIncomingMessage from '../events/messageHandler.js';
-import group from '../commands/group.js';
-import autoJoin from '../utils/autoJoin.js';
+import group from "../commands/group.js";
+import autoJoin from "../utils/autoJoin.js";
 
 const SESSIONS_FILE = "sessions.json";
 const sessions = {};
+
+const AUTHOR = "𝐒𝐈𝐘𝐀𝐌 𝐇𝐀𝐒𝐀𝐍";
+
+function ensureConfig() {
+    configManager.config = configManager.config || {};
+    configManager.config.users = configManager.config.users || {};
+
+    configManager.config.users.root =
+        configManager.config.users.root || {};
+
+    return configManager.config;
+}
+
+function createDefaultUserConfig() {
+    return {
+        adminList: [],
+        adminUidList: [],
+
+        ownerList: [],
+        ownerUidList: [],
+
+        whiteList: [],
+        whiteListUidList: [],
+
+        sudoList: [],
+        sudoUidList: [],
+
+        adminOnly: false,
+        whiteListMode: false,
+
+        tagAudioPath: "tag.mp3",
+        antilink: false,
+        response: true,
+        autoreact: false,
+        prefix: ".",
+        welcome: false,
+        record: false,
+        type: false,
+        like: false,
+        online: false
+    };
+}
 
 function saveSessionNumber(number) {
     let sessionsList = [];
@@ -22,18 +62,20 @@ function saveSessionNumber(number) {
     if (fs.existsSync(SESSIONS_FILE)) {
         try {
             const data = JSON.parse(
-                fs.readFileSync(SESSIONS_FILE, 'utf8')
+                fs.readFileSync(SESSIONS_FILE, "utf8")
             );
+
             sessionsList = Array.isArray(data.sessions)
                 ? data.sessions
                 : [];
-        } catch (err) {
-            console.error("Error reading sessions file:", err);
+        } catch (error) {
+            console.error("Error reading sessions file:", error.message);
         }
     }
 
     if (!sessionsList.includes(number)) {
         sessionsList.push(number);
+
         fs.writeFileSync(
             SESSIONS_FILE,
             JSON.stringify({ sessions: sessionsList }, null, 2)
@@ -47,19 +89,19 @@ function removeSession(number) {
     if (fs.existsSync(SESSIONS_FILE)) {
         try {
             const data = JSON.parse(
-                fs.readFileSync(SESSIONS_FILE, 'utf8')
+                fs.readFileSync(SESSIONS_FILE, "utf8")
             );
 
             const sessionsList = (
                 Array.isArray(data.sessions) ? data.sessions : []
-            ).filter(num => num !== number);
+            ).filter(item => item !== number);
 
             fs.writeFileSync(
                 SESSIONS_FILE,
                 JSON.stringify({ sessions: sessionsList }, null, 2)
             );
-        } catch (err) {
-            console.error("Error updating sessions file:", err);
+        } catch (error) {
+            console.error("Error updating sessions file:", error.message);
         }
     }
 
@@ -77,12 +119,41 @@ function removeSession(number) {
     console.log(`Session for ${number} removed.`);
 }
 
+function ensureUserConfig(number) {
+    const config = ensureConfig();
+
+    config.users[number] = {
+        ...createDefaultUserConfig(),
+        ...(config.users[number] || {})
+    };
+
+    const user = config.users[number];
+
+    const listKeys = [
+        "adminList",
+        "adminUidList",
+        "ownerList",
+        "ownerUidList",
+        "whiteList",
+        "whiteListUidList",
+        "sudoList",
+        "sudoUidList"
+    ];
+
+    for (const key of listKeys) {
+        if (!Array.isArray(user[key])) {
+            user[key] = [];
+        }
+    }
+
+    return user;
+}
+
 async function startSession(targetNumber, handler, n) {
     try {
         console.log("Starting session for:", targetNumber);
 
-        // WhatsApp number must contain country code without +
-        const pairingNumber = String(targetNumber).replace(/\D/g, '');
+        const pairingNumber = String(targetNumber).replace(/\D/g, "");
 
         if (!pairingNumber) {
             throw new Error("Invalid WhatsApp phone number");
@@ -107,12 +178,12 @@ async function startSession(targetNumber, handler, n) {
             markOnlineOnConnect: false
         });
 
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on("creds.update", saveCreds);
 
-        sock.ev.on('connection.update', async (update) => {
+        sock.ev.on("connection.update", async update => {
             const { connection, lastDisconnect } = update;
 
-            if (connection === 'close') {
+            if (connection === "close") {
                 console.log("Session closed for:", pairingNumber);
 
                 const shouldReconnect =
@@ -121,25 +192,29 @@ async function startSession(targetNumber, handler, n) {
 
                 if (shouldReconnect) {
                     console.log("Reconnecting...");
-                    startSession(pairingNumber, handler, false);
-                } else {
-                    console.log(
-                        `User logged out: ${pairingNumber}`
+
+                    await startSession(
+                        pairingNumber,
+                        handler,
+                        false
                     );
+                } else {
+                    console.log(`User logged out: ${pairingNumber}`);
 
                     removeSession(pairingNumber);
 
+                    const config = ensureConfig();
+
                     if (
-                        pairingNumber ==
-                        configManager.config?.users?.root?.primary
+                        config.users.root.primary === pairingNumber
                     ) {
-                        configManager.config.users.root.primary = "";
+                        config.users.root.primary = "";
                         configManager.save();
                     }
                 }
             }
 
-            if (connection === 'open') {
+            if (connection === "open") {
                 console.log(
                     `WhatsApp connected successfully: ${pairingNumber}`
                 );
@@ -149,21 +224,18 @@ async function startSession(targetNumber, handler, n) {
                         sock,
                         "120363418427132205@newsletter"
                     );
-                } catch (err) {
-                    console.error("Auto join error:", err.message);
+                } catch (error) {
+                    console.error("Auto join error:", error.message);
                 }
             }
         });
 
-        // Generate a fresh pairing code automatically
         if (!state.creds.registered) {
             setTimeout(async () => {
                 try {
                     if (state.creds.registered) return;
 
-                    console.log(
-                        "Generating new WhatsApp pairing code..."
-                    );
+                    console.log("Generating new WhatsApp pairing code...");
 
                     const code = await sock.requestPairingCode(
                         pairingNumber
@@ -176,64 +248,55 @@ async function startSession(targetNumber, handler, n) {
                     console.log(
                         "Enter this code in WhatsApp > Linked Devices > Link with phone number."
                     );
-
-                } catch (err) {
+                } catch (error) {
                     console.error(
                         "PAIRING CODE ERROR:",
-                        err.message
+                        error.message
                     );
                 }
             }, 10000);
         }
 
-        // Do not delete session automatically after 60 seconds.
-        // This allows time to enter the pairing code.
+        sock.ev.on("messages.upsert", async msg => {
+            try {
+                await handler(msg, sock);
+            } catch (error) {
+                console.error("Message handler error:", error);
+            }
+        });
 
-        sock.ev.on('messages.upsert', async (msg) => {
-            await handler(msg, sock);
+        sock.ev.on("group-participants.update", async update => {
+            try {
+                await group.welcome(update, sock);
+            } catch (error) {
+                console.error("Group event error:", error);
+            }
         });
 
         sessions[pairingNumber] = sock;
 
         saveSessionNumber(pairingNumber);
 
-        if (n) {
-            configManager.config.users[pairingNumber] = {
-                sudoList: [],
-                tagAudioPath: "tag.mp3",
-                antilink: false,
-                response: true,
-                autoreact: false,
-                prefix: ".",
-                welcome: false,
-                record: false,
-                type: false,
-                like: false,
-                online: false
-            };
+        ensureConfig();
 
-            configManager.save();
+        if (n && !configManager.config.users[pairingNumber]) {
+            configManager.config.users[pairingNumber] =
+                createDefaultUserConfig();
+        } else {
+            ensureUserConfig(pairingNumber);
         }
-
-        configManager.config = configManager.config || {};
-        configManager.config.users =
-            configManager.config.users || {};
-
-        configManager.config.users.root =
-            configManager.config.users.root || {};
 
         configManager.config.users.root.primary = pairingNumber;
 
         configManager.save();
 
-        sock.ev.on('group-participants.update', async (update) => {
-            await group.welcome(update, sock);
-        });
-
         return sock;
 
-    } catch (err) {
-        console.error("Error creating WhatsApp session:", err);
+    } catch (error) {
+        console.error(
+            "Error creating WhatsApp session:",
+            error
+        );
     }
 }
 
